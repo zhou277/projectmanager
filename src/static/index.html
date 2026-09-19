@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>projectmanager</title>
+<link rel="icon" type="image/png" href="/static/app_icon.png">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar">
+    <div class="brand"><img src="/static/app_icon.png" class="brand-icon" alt="projectmanager">projectmanager</div>
+    <button class="primary full" onclick="openProjectDialog()">+ 新建项目</button>
+    <div id="projectList" class="project-list"></div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h1 id="projectTitle">请选择项目</h1>
+        <div id="projectMeta" class="muted"></div>
+      </div>
+      <div class="toolbar">
+        <button onclick="toggleTheme()">切换主题</button>
+        <button onclick="editProject()">编辑项目</button>
+        <button class="danger" onclick="deleteProject()">删除项目</button>
+        <button class="exit-btn" onclick="exitApplication()">退出软件</button>
+      </div>
+    </header>
+    <nav class="tabs">
+      <button class="active" data-tab="overview">📊 总览</button>
+      <button data-tab="tasks">✅ 任务 / 子任务</button>
+      <button data-tab="gantt">🗓️ 甘特图</button>
+      <button data-tab="tests">🧪 测试</button>
+      <button data-tab="issues">🐞 Issue</button>
+      <button data-tab="logs">📝 研发记录</button>
+      <button data-tab="versions">💿 软件版本</button>
+      <button data-tab="reports">📄 报告中心</button>
+    </nav>
+    <section id="content"></section>
+  </main>
+</div>
+<div id="modal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-header"><h3 id="modalTitle"></h3><button onclick="closeModal()">✕</button></div>
+    <div id="modalBody"></div>
+  </div>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>
