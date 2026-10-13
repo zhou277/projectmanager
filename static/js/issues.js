@@ -1,0 +1,11 @@
+// projectmanager 3.21.0 — issues
+// Classic script: shared globals preserve existing HTML event handlers.
+async function issues(){
+ let rows=await api(`/api/issues/${S.projectId}`);
+ $("#content").innerHTML=`<div class="actions"><button class="primary" onclick="issueDialog()">+ 新增</button><button data-edit-selected="issue">编辑选中</button><button class="danger" onclick="del('issue')">删除选中</button></div>
+ <div class="card"><table><thead><tr><th>ID</th><th>Issue</th><th>类型</th><th>严重度</th><th>软件版本</th><th>状态</th><th>负责人</th><th>创建时间</th></tr></thead><tbody>${rows.map(x=>`<tr ${issueRowEvents(x.id)}>${td(issueId(x.display_id),"center")}${td(esc(x.title))}${td(esc(x.issue_type),"center")}${td(esc(x.severity),"center")}${td(vers(x.versions),"center")}${td(inlineStatusSelect(x.id,x.status,"issue"),"center")}${td(esc(x.assignee),"center")}${td(esc(x.created_at),"center")}</tr>`).join("")}</tbody></table></div>`;
+}
+
+async function issueDialog(edit=false,editId=null){let rows=await api(`/api/issues/${S.projectId}`);const targetId=edit?Number(editId ?? selectedIdFor("issue")):null;if(edit && Number.isFinite(targetId)){S.selected=targetId;S.selectedKind="issue";}let x=edit?rows.find(r=>Number(r.id)===targetId):null;if(edit&&!x)return alert("请先选择 Issue");let av=await api(`/api/versions/${S.projectId}`),ids=x?av.filter(v=>(x.versions||[]).includes(v.version)).map(v=>v.id):[];let selectedVersionId=ids.length?ids[0]:"";showModal(edit?"编辑 Issue":"新增 Issue",`<div class="form-grid">${f("标题","title",x?.title||"")}${sf("类型","issue_type",["Bug","需求","优化","集成问题","硬件问题","算法问题","仿真问题","通信问题","其他"],x?.issue_type||"Bug")}${sf("严重度","severity",["低","中","高","紧急"],x?.severity||"中")}${sf("状态","status",["Open","In Progress","Blocked","Resolved","Closed"],x?.status||"Open")}${f("负责人","assignee",x?.assignee||"")}${ta("问题描述","description",x?.description||"")}${ta("根因分析","root_cause",x?.root_cause||"")}${ta("解决方案","solution",x?.solution||"")}${await versionSelect(selectedVersionId)}</div>${buttons(`saveIssue(${edit})`)}`)}
+
+async function saveIssue(edit){await api(edit?`/api/issues/item/${S.selected}`:`/api/issues/${S.projectId}`,{method:edit?"PUT":"POST",body:JSON.stringify(vals())});closeModal();S.selected=null;S.selectedKind=null;issues()}

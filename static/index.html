@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>projectmanager</title>
+<link rel="icon" type="image/png" href="/static/app_icon.png">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar">
+    <button id="sidebarToggle" class="full" onclick="toggleSidebar()" aria-expanded="true" title="收起左侧导航">☰ <span class="sidebar-label">收起导航</span></button>
+    <div class="brand">
+      <div class="brand-logo"><img src="/static/app_icon.png" class="brand-icon" alt="projectmanager"></div>
+      <div class="brand-copy">
+        <div class="brand-title">projectmanager</div>
+        <div class="brand-subtitle">Workspace</div>
+      </div>
+    </div>
+    <button data-nav="personal" class="full sidebar-nav-button personal-dashboard-button" onclick="openPersonalDashboard()" title="个人 Dashboard"><span aria-hidden="true">◉</span> <span class="sidebar-label">个人 Dashboard</span></button>
+    <button data-nav="projects" class="full sidebar-nav-button" onclick="openProjects()" title="项目"><span aria-hidden="true">📁</span> <span class="sidebar-label">项目</span></button>
+    <div id="sidebarProjects" hidden><button class="full" onclick="openProjectDialog()">+ 新建项目</button><div id="projectList" class="project-list"></div></div>
+    <button data-nav="daily" class="full sidebar-nav-button daily-journal-button" onclick="openDailyLogs()" title="每日日志"><span aria-hidden="true">📝</span> <span class="sidebar-label">每日日志</span></button>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-title">
+        <h1 id="projectTitle">请选择项目</h1>
+        <div id="projectMeta" class="muted"></div>
+      </div>
+      <div class="toolbar">
+        <button onclick="toggleTheme()">切换主题</button>
+        <button data-project-action onclick="editProject()">编辑项目</button>
+        <button data-project-action class="danger" onclick="deleteProject()">删除项目</button>
+        <button class="exit-btn" onclick="exitApplication()">退出软件</button>
+      </div>
+    </header>
+    <nav class="tabs">
+      <button data-context="personal" onclick="render()">刷新 Dashboard</button>
+      <button data-context="projects" hidden data-tab="overview">📊 项目 Dashboard</button>
+      <button data-context="projects" hidden data-tab="tasks">✅ 任务 / 子任务</button>
+      <button data-context="projects" hidden data-tab="gantt">🗓️ 甘特图</button>
+      <button data-context="projects" hidden data-tab="tests">🧪 测试</button>
+      <button data-context="projects" hidden data-tab="issues">🐞 Issue</button>
+      <button data-context="projects" hidden data-tab="logs">📝 研发记录</button>
+      <button data-context="projects" hidden data-tab="versions">💿 软件版本</button>
+      <button data-tab="settings">⚙ 设置</button>
+      <button data-tool="help" onclick="openHelp()">? 帮助</button>
+      <button data-tab="about">ⓘ 版本信息</button>
+    </nav>
+    <section id="content"></section>
+  </main>
+</div>
+<div id="modal" class="modal hidden">
+  <div class="modal-card">
+    <div class="modal-header"><h3 id="modalTitle"></h3><button onclick="closeModal()">✕</button></div>
+    <div id="modalBody"></div>
+  </div>
+</div>
+<!-- Ordered classic scripts: helpers/state, shared UI, features, bootstrap. No build step. -->
+<script src="/static/js/util.js"></script>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/core.js"></script>
+<script src="/static/js/modal.js"></script>
+<script src="/static/js/lifecycle.js"></script>
+<script src="/static/js/interactions.js"></script>
+<script src="/static/js/navigation.js"></script>
+<script src="/static/js/projects.js"></script>
+<script src="/static/js/dependencies.js"></script>
+<script src="/static/js/dashboard.js"></script>
+<script src="/static/js/daily_logs.js"></script>
+<script src="/static/js/tasks.js"></script>
+<script src="/static/js/issues.js"></script>
+<script src="/static/js/tests.js"></script>
+<script src="/static/js/versions.js"></script>
+<script src="/static/js/overview.js"></script>
+<script src="/static/js/logs.js"></script>
+<script src="/static/js/gantt.js"></script>
+<script src="/static/js/settings.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

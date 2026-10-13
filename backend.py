@@ -55,6 +55,32 @@ class Database:
                 target_date TEXT DEFAULT '',
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS daily_logs(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                log_date TEXT NOT NULL UNIQUE,
+                planned TEXT NOT NULL DEFAULT '',
+                actual TEXT NOT NULL DEFAULT '',
+                progress INTEGER NOT NULL DEFAULT 0 CHECK(progress BETWEEN 0 AND 100),
+                revision INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS daily_log_items(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                log_id INTEGER NOT NULL,
+                entity_kind TEXT NOT NULL CHECK(entity_kind IN ('task','issue')),
+                entity_id INTEGER NOT NULL,
+                project_id INTEGER NOT NULL,
+                project_name TEXT NOT NULL,
+                display_id INTEGER NOT NULL,
+                title TEXT NOT NULL,
+                snapshot_status TEXT NOT NULL,
+                progress INTEGER NOT NULL DEFAULT 0 CHECK(progress BETWEEN 0 AND 100),
+                result TEXT NOT NULL DEFAULT '',
+                ordinal INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(log_id,entity_kind,entity_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_daily_log_items_log ON daily_log_items(log_id);
             CREATE TABLE IF NOT EXISTS tasks(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 project_id INTEGER NOT NULL,
@@ -199,6 +225,7 @@ class Database:
             """)
 
     def ensure_compatibility(self):
+        self.ensure_column("daily_logs", "tomorrow", "TEXT DEFAULT ''")
         self.ensure_column("tasks", "completed_at", "TEXT")
         self.ensure_column("tests", "software_version", "TEXT DEFAULT ''")
         self.ensure_column("issues", "software_version", "TEXT DEFAULT ''")

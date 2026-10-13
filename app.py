@@ -17,11 +17,13 @@ from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from backend import Database, now_text, today_text
+from task_schedule import default_task_day, schedule_task
 from dashboard import dashboard_data
+from daily_logs import make_daily_router
 from task_dependencies import validate_dependencies, replace_dependencies, enrich_dependencies
 
 APP_NAME = "projectmanager"
-APP_VERSION = "3.21.0"
+APP_VERSION = "3.25.0"
 HOST = "127.0.0.1"
 PREFERRED_PORT = 7000
 
@@ -170,6 +172,7 @@ CURRENT_PORT = None
 CLIENTS = {}
 CLIENT_LOCK = Lock()
 TASK_WRITE_LOCK = Lock()
+app.include_router(make_daily_router(lambda: db, lambda: today_text(), lambda: now_text(), TASK_WRITE_LOCK))
 EVER_HAD_CLIENT = False
 NO_CLIENT_SINCE = None
 CLIENT_STALE_SECONDS = 1800.0
@@ -241,6 +244,9 @@ def about():
         "current_port": CURRENT_PORT,
         "timezone": "UTC+8",
         "release_notes": [
+            "左侧统一个人 Dashboard、项目、每日日志导航，上方工具栏按当前页面显示",
+            "新增独立每日日志：每日计划、实际工作与进度",
+            "支持跨项目拖拽/勾选任务与 Issue，按年月归档并保留历史快照",
             "新增多前置任务依赖与循环校验、等待/延期风险提示、甘特图依赖箭头",
             "新增个人整体 Dashboard，增强各项目 Dashboard 与跨项目任务跳转",
             "前端按职责模块化，保持现有 UI 与业务功能",
@@ -379,12 +385,14 @@ def create_task(pid:int,p:dict=Body(...)):
         parent_id=validate_task_parent(pid,None,p.get("parent_id"))
         dependencies=validate_dependencies(connection,pid,None,p.get("dependency_ids",[]))
         status=p.get("status","待办")
+        default_day = default_task_day(connection,pid,parent_id,today_text()) if not p.get("start_date") else p["start_date"]
         tid=connection.execute("""INSERT INTO tasks(project_id,parent_id,milestone_id,title,description,owner,status,priority,start_date,due_date,completed_at)
                    VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                 (pid,parent_id,None,title,p.get("description",""),"",status,p.get("priority","中"),
-                 p.get("start_date") or today_text(),p.get("due_date") or today_text(),task_completion_time(None,status,None))).lastrowid
+                 p.get("start_date") or default_day,p.get("due_date") or default_day,task_completion_time(None,status,None))).lastrowid
         replace_dependencies(connection,tid,dependencies)
         replace_task_versions(connection,tid,p.get("version_ids",[]))
+        schedule_task(connection,pid,tid)
     return {"id":tid}
 
 @app.put("/api/tasks/item/{tid}")
@@ -409,6 +417,7 @@ def update_task(tid:int,p:dict=Body(...)):
             replace_dependencies(connection,tid,dependencies)
         if "version_ids" in p:
             replace_task_versions(connection,tid,p["version_ids"])
+        schedule_task(connection,row["project_id"],tid)
     return {"ok":True}
 
 @app.get("/api/tasks/item/{tid}/dependencies")
@@ -430,6 +439,7 @@ def update_task_dependencies(tid:int,p:dict=Body(...)):
             raise HTTPException(400,"缺少前置任务列表")
         ids=validate_dependencies(connection,row["project_id"],tid,p["dependency_ids"])
         replace_dependencies(connection,tid,ids)
+        schedule_task(connection,row["project_id"],tid)
     return {"ok":True,"dependency_ids":ids}
 
 @app.patch("/api/tasks/item/{tid}/status")
