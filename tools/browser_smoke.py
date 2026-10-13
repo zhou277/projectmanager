@@ -85,6 +85,13 @@ with tempfile.TemporaryDirectory(prefix="pm-browser-321-") as directory:
                 expect(page.locator('#content')).to_contain_text('项目 Dashboard')
                 expect(page.locator('.dashboard-pie')).to_be_visible()
                 expect(page.locator('#sidebarProjects')).to_be_visible()
+                # Move projects with arrows and drag, then reload the persisted order.
+                page.get_by_role('button',name='上移 机械臂控制',exact=True).click()
+                page.wait_for_function("async()=> (await (await fetch('/api/projects')).json())[0].name==='机械臂控制'")
+                expect(page.locator('.project-item-name').first).to_have_text('机械臂控制')
+                page.locator(f'.project-item[data-project-id="{p}"]').drag_to(page.locator(f'.project-item[data-project-id="{q}"]'),source_position={'x':8,'y':8})
+                page.wait_for_function("async()=> (await (await fetch('/api/projects')).json())[0].name==='机器人导航'")
+                expect(page.locator('.project-item-name').first).to_have_text('机器人导航')
                 assert page.locator('.tabs [data-context=projects]:visible').count()==7
                 expect(page.locator('#content')).to_contain_text('v1.8.0')
                 assert page.locator('[data-project-action]:visible').count() == 2
@@ -113,6 +120,47 @@ with tempfile.TemporaryDirectory(prefix="pm-browser-321-") as directory:
                 page.wait_for_function('document.querySelector("#modalBody").textContent.includes("前置任务")')
                 assert any('循环' in message for message in dialogs)
                 page.locator('#modal .modal-header button').click()
+
+                # Every creation form selects the most recently recorded version;
+                # editing keeps older version links. Test/Issue use the same picker.
+                for index in range(20):
+                    request(f'/api/versions/{p}',{'version':f'v1.9.{index}','branch':'testing'})
+                latest=request(f'/api/versions/{p}',{'version':'v2.0.0','branch':'feature/long-branch-name-validation'})['id']
+                page.locator('.tabs button[data-tab=tests]').click()
+                page.locator('#content').get_by_role('button',name='+ 新增',exact=True).click()
+                expect(page.locator('#modalTitle')).to_have_text('新增测试')
+                expect(page.locator(f'input[name=version_id][value="{latest}"]')).to_be_checked()
+                version_picker=page.locator('details').filter(has=page.locator('input[name=version_id]'))
+                version_picker.locator('summary').click()
+                assert version_picker.locator('.multi-options').evaluate('e=>e.scrollHeight>e.clientHeight')
+                expect(page.locator(f'input[name=version_id][value="{v}"]')).not_to_be_checked()
+                page.locator(f'input[name=version_id][value="{v}"]').check()
+                page.locator('#f_name').fill('关联 Issue 的版本回归')
+                page.locator('#modalBody').get_by_role('button',name='保存',exact=True).click()
+                expect(page.locator('#modal')).to_be_hidden()
+                linked_test=next(item for item in request(f'/api/tests/{p}') if item['name']=='关联 Issue 的版本回归')
+                assert set(linked_test['versions'])=={'v1.8.0','v2.0.0'}
+                page.locator('.tabs button[data-tab=issues]').click()
+                page.locator('#content').get_by_role('button',name='+ 新增',exact=True).click()
+                expect(page.locator('#modalTitle')).to_have_text('新增 Issue')
+                expect(page.locator(f'input[name=version_id][value="{latest}"]')).to_be_checked()
+                page.locator('#f_title').fill('关联测试验证')
+                test_picker=page.locator('details').filter(has=page.locator('input[name=test_id]'))
+                test_picker.locator('summary').click()
+                page.locator(f'input[name=test_id][value="{linked_test["id"]}"]').check()
+                page.locator('#modalBody').get_by_role('button',name='保存',exact=True).click()
+                expect(page.locator('#modal')).to_be_hidden()
+                linked_issue=next(item for item in request(f'/api/issues/{p}') if item['title']=='关联测试验证')
+                assert linked_issue['test_ids']==[linked_test['id']]
+                page.locator('.issue-test-link').filter(has_text=linked_test['name']).click()
+                expect(page.locator('#modalTitle')).to_have_text('编辑测试')
+                expect(page.locator('#f_name')).to_have_value('关联 Issue 的版本回归')
+                page.locator('#modal .modal-header button').click()
+                page.locator('.tabs button[data-tab=versions]').click()
+                expect(page.locator('.version-table')).to_contain_text('feature/long-branch-name-validation')
+                assert page.locator('.version-table td:nth-child(3)').first.evaluate('e=>parseFloat(getComputedStyle(e).minWidth)')>120
+                assert 'T' not in page.locator('.version-table td:nth-child(5)').first.inner_text()
+                page.locator('.tabs button[data-tab=tasks]').click()
                 assert request(f'/api/tasks/item/{a}/dependencies')['dependency_ids'] == []
 
                 # Task and child forms keep status/priority side by side, versions are multi-select.
@@ -135,14 +183,14 @@ with tempfile.TemporaryDirectory(prefix="pm-browser-321-") as directory:
                 version_details=page.locator('details').filter(has=page.locator('input[name=version_id]'))
                 version_details.locator('summary').click()
                 page.locator(f'input[name=version_id][value="{v}"]').check()
-                expect(version_details.locator('summary')).to_contain_text('已选择 1 项')
+                expect(version_details.locator('summary')).to_contain_text('已选择 2 项')
                 page.screenshot(path=str(artifacts / 'child-task-multi-select.png'), full_page=True)
                 page.locator('#f_start_date').fill(stamp(7))
                 page.locator('#f_due_date').fill(stamp(8))
                 page.get_by_role('button',name='创建子任务',exact=True).click()
                 expect(page.locator('#modalTitle')).to_have_text('编辑任务')
                 child=next(row for row in request(f'/api/tasks/{p}') if row['title']=='浏览器新增子任务')
-                assert child['parent_id']==a and child['versions']==['v1.8.0']
+                assert child['parent_id']==a and set(child['versions'])=={'v1.8.0','v2.0.0'}
                 assert next(row for row in request(f'/api/tasks/{p}') if row['id']==a)['due_date']==stamp(8)
                 page.locator('#modal .modal-header button').click()
 
@@ -205,7 +253,7 @@ with tempfile.TemporaryDirectory(prefix="pm-browser-321-") as directory:
                 actual_box=page.locator('#dailyActual').bounding_box()
                 assert abs(planned_box['y']-actual_box['y'])<2 and actual_box['x']>planned_box['x']
                 assert page.locator('input[data-daily-select]').count()==0
-                assert page.locator('[draggable=true]').count()==0
+                assert page.locator('.daily-workbench [draggable=true]').count()==0
                 assert page.locator('#dailyDropZone').count()==0
                 # Reference links open current descriptions without leaving the draft.
                 page.locator(f'[data-source-key="task:{a}"] button').click()
@@ -251,9 +299,13 @@ with tempfile.TemporaryDirectory(prefix="pm-browser-321-") as directory:
                 page.locator('#dailyActual').fill('年度复盘')
                 page.locator('#dailySaveButton').click()
                 expect(page.locator('#dailySaveStatus')).to_contain_text('已保存')
-                expect(page.locator('#dailyArchive')).to_contain_text('2025 年 12 月')
+                expect(page.locator('#dailyArchive')).to_contain_text('2026 年 第 1 周工作日志')
+                expect(page.locator('.daily-archive-day')).to_contain_text('2025-12-31 星期三')
+                assert page.locator('.daily-archive-day small').count()==0
+                assert '年度复盘' not in page.locator('#dailyArchive').inner_text()
                 page.locator('#dailyYear').select_option('2026')
-                page.locator('#dailyMonth').select_option(day[5:7].lstrip('0'))
+                current_week=page.evaluate(f'dailyWorkWeek("{day}").week')
+                page.locator('#dailyWeek').select_option(str(current_week))
                 page.locator('.daily-archive-day').filter(has_text=day[5:]).click()
                 expect(page.locator('#dailyActual')).to_have_value('完成地图数据分析与接口联调')
                 expect(page.locator('#dailyTomorrow')).to_have_value('明天继续验证导航和机械臂联调')
@@ -285,7 +337,7 @@ with tempfile.TemporaryDirectory(prefix="pm-browser-321-") as directory:
                 page.screenshot(path=str(artifacts/'daily-journal-dark.png'),full_page=True)
                 assert errors == [], errors
                 browser.close()
-            print('Browser QA passed: dropdown multi-selects, child versions, two-column forms, date propagation, persistent collapsed sidebar, tomorrow plan, parallel plan/actual columns, read-only task/Issue description links, filtering and legacy results, archive and stale-save protection; no JavaScript runtime errors.')
+            print('Browser QA passed: work-week archive with date/weekday only, space timestamps, project arrow/drag ordering, Issue/test links, latest version defaults, shared dropdown pickers, wide branches and existing business flows; no JavaScript runtime errors.')
         finally:
             # Windows venv launcher spawns a child interpreter; stop only this QA tree.
             if os.name == "nt":

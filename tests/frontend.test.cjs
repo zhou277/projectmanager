@@ -337,7 +337,7 @@ function setupDaily(h){
 test('daily journal renders tomorrow plan without percentages and keeps pool/archive',async()=>{
  const h=await harness();setupDaily(h);h.run('renderDailyLog()');
  const output=h.node('#content').innerHTML;
- for(const text of ['今天计划做什么','今天实际做了什么','明日计划','日志归档','2026 年','10 月','项目甲','项目乙','daily-writing-columns','daily-source-link'])assert.ok(output.includes(text),text);
+ for(const text of ['今天计划做什么','今天实际做了什么','明日计划','工作周日志','2026 年','第 41 周','星期五','项目甲','项目乙','daily-writing-columns','daily-source-link'])assert.ok(output.includes(text),text);
  assert.ok(!output.includes('id="dailyProgress"'));assert.ok(!output.includes('%'));assert.ok(!output.includes('type="number"'));
  assert.ok(output.includes('&lt;任务&gt;'));assert.ok(!output.includes('<任务>'));
 });
@@ -497,4 +497,57 @@ test('help opens contextual teaching and switches topics without changing page o
  setupDaily(h);h.run('Daily.dirty=true;Daily.log.actual="未保存工作";openHelp("daily")');assert.match(h.node('#modalBody').innerHTML,/明日计划/);assert.match(h.node('#modalBody').innerHTML,/只有这一个保存按钮/);
  assert.equal(h.run('S.tab'),'daily');assert.equal(h.run('Daily.dirty'),true);assert.equal(h.run('Daily.log.actual'),'未保存工作');
  const topics=h.run('Object.keys(HELP_GUIDES)');for(const topic of topics){h.run(`openHelp(${JSON.stringify(topic)})`);assert.match(h.node('#modalBody').innerHTML,/<ol>/);}
+});
+
+test('work-week archive omits all summaries and groups cross-year dates correctly',async()=>{
+ const h=await harness();setupDaily(h);
+ h.run('Daily.date="2025-12-31";Daily.year=2026;Daily.week=1;Daily.archive={work_years:[{year:2026,weeks:[{week:1,start_date:"2025-12-29",end_date:"2026-01-04",days:[{log_date:"2025-12-31",weekday:3,summary:"不应预览"}]}]}]}');
+ let output=h.run('dailyArchiveHtml()');assert.match(output,/2026 年 第 1 周工作日志/);assert.match(output,/2025-12-31 星期三/);assert.ok(!output.includes('不应预览'));assert.ok(!output.includes('<small>'));assert.ok(!output.includes('title='));
+ assert.equal(h.run('dailyWorkWeek("2025-12-29").year'),2026);assert.equal(h.run('dailyWorkWeek("2027-01-01").week'),53);
+ assert.equal(h.run('dailyWorkWeek("2026-01-04").weekday'),7);assert.equal(h.run('dailyWorkWeek("2026-01-05").week'),2);
+ assert.equal(h.run('dailyWorkWeek("2024-02-29").week'),9);
+});
+
+test('all new entity pickers default to latest while edited and empty selections remain unchanged',async()=>{
+ const h=await harness();h.data.versions.push({id:31,version:'v0.5'});
+ for(const code of ['taskDialog()','openChildTaskDialog(10)','issueDialog()','testDialog()']){
+   await h.run(code);const output=h.node('#modalBody').innerHTML;assert.match(output,/name="version_id" value="31" checked/);assert.ok(output.includes('<details class="multi-select"'));assert.ok(output.includes('multi-options'));
+ }
+ for(const code of ['taskDialog(true,10)','issueDialog(true,20)','testDialog(true,40)']){
+   await h.run(code);const output=h.node('#modalBody').innerHTML;assert.match(output,/name="version_id" value="30" checked/);assert.ok(!output.includes('name="version_id" value="31" checked'));
+ }
+ h.data.tasks[0].versions=[];await h.run('taskDialog(true,10)');assert.ok(!h.node('#modalBody').innerHTML.includes(' checked'));
+ h.data.versions=[];await h.run('testDialog()');assert.match(h.node('#modalBody').innerHTML,/请先创建软件版本/);
+});
+
+test('Issue associated tests are selected, serialized and linked to correct test editor',async()=>{
+ const h=await harness();h.data.issues[0].test_ids=[40];h.data.issues[0].tests=[{id:40,display_id:1,name:'关联回归',status:'未执行'}];
+ await h.run('issueDialog(true,20)');assert.match(h.node('#modalBody').innerHTML,/name="test_id" value="40" checked/);
+ h.form({title:'关联问题'});const old=h.context.document.querySelectorAll;h.context.document.querySelectorAll=selector=>selector==='#modalBody input[name=test_id]:checked'?[{value:'40'}]:old(selector);
+ await h.run('saveIssue(true)');const request=h.calls.findLast(call=>call.url==='/api/issues/item/20'&&call.method==='PUT');assert.deepEqual(request.body.test_ids,[40]);
+ assert.match(h.run('issueTestLinks({id:20,project_id:1,tests:[{id:40,display_id:1,name:"<测试>",status:"通过"}]})'),/openIssueTest\(1,40\)/);
+ await h.run('openIssueTest(1,40)');assert.equal(h.run('S.tab'),'tests');assert.equal(h.node('#modalTitle').textContent,'编辑测试');
+});
+
+test('Issue rejected association save preserves editor and explains failure',async()=>{
+ const h=await harness();await h.run('issueDialog(true,20)');h.form({title:'不丢失的输入'});h.context.fetch=async()=>({ok:false,text:async()=>'关联测试已删除'});
+ await h.run('saveIssue(true)');assert.equal(h.run('S.selected'),20);assert.ok(!h.node('#modal').classList.contains('hidden'));assert.ok(h.alerts.some(message=>message.includes('关联测试已删除')));
+});
+
+test('project arrows and drag persist order without changing selected project',async()=>{
+ const h=await harness();let projects=[{id:1,name:'甲'},{id:2,name:'乙'},{id:3,name:'丙'}],saved=[];
+ h.context.fetch=async(url,options={})=>{
+   if(url==='/api/projects/order'){const ids=JSON.parse(options.body).project_ids;saved.push(ids);projects=ids.map(id=>projects.find(p=>p.id===id));}
+   return {ok:true,text:async()=>JSON.stringify(url==='/api/projects'?projects:{ok:true})};
+ };
+ h.run('S.projects=[{id:1,name:"甲"},{id:2,name:"乙"},{id:3,name:"丙"}];S.projectId=1;renderProjectList()');
+ await h.run('moveProject(3,-1)');assert.deepEqual(saved[0],[1,3,2]);assert.equal(h.run('S.projectId'),1);
+ h.context.orderDrop={preventDefault(){},stopPropagation(){},dataTransfer:{getData(){return '2';}}};await h.run('projectDrop(orderDrop,1)');assert.deepEqual(saved[1],[2,1,3]);assert.equal(h.run('S.projectId'),1);
+ assert.ok(html.indexOf('data-nav="daily"')<html.indexOf('data-nav="projects"'));assert.match(h.node('#projectList').innerHTML,/上移/);
+});
+
+test('timestamp display uses spaces without changing stored fields or ordinary text',async()=>{
+ const h=await harness();assert.equal(h.run('displayDateTime("2026-10-13T09:30")'),'2026-10-13 09:30');assert.equal(h.run('displayDateTime("2026-10-13 09:30")'),'2026-10-13 09:30');assert.equal(h.run('displayDateTime("Task-1")'),'Task-1');
+ h.data.versions[0].recorded_at='2026-10-13T09:30';await h.run('versions()');assert.match(h.node('#content').innerHTML,/2026-10-13 09:30/);assert.equal(h.data.versions[0].recorded_at,'2026-10-13T09:30');
+ setupDaily(h);h.run('Daily.log.id=1;Daily.log.updated_at="2026-10-13T10:45";renderDailyLog()');assert.match(h.node('#content').innerHTML,/2026-10-13 10:45/);
 });

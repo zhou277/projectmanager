@@ -1784,3 +1784,15 @@ body.light .gantt-today-label{
 .daily-legacy-records{margin-top:14px}
 .daily-legacy-records summary{cursor:pointer;font-weight:650}
 @media(max-width:800px){.daily-writing-columns{grid-template-columns:minmax(0,1fr)}.daily-writing-columns .daily-main-text{min-height:220px}}
+
+/* v3.26.0: reorderable projects, wider branches and scrollable pickers. */
+.version-table th:nth-child(3),.version-table td:nth-child(3){width:28ch;min-width:24ch;max-width:none;white-space:normal;overflow-wrap:anywhere}
+.project-item{display:flex;align-items:center;gap:6px}
+.project-item-name{min-width:0;flex:1}
+.project-order-tools{display:flex;gap:3px;flex:none}
+.project-order-tools button{padding:2px 4px;font-size:11px}
+.project-item[draggable=true]{cursor:grab}
+.project-item:focus-within{outline:1px solid var(--blue)}
+.multi-options{overscroll-behavior:contain}
+.issue-test-link{display:block;text-align:left;margin:3px 0}
+.daily-archive-day strong{font-size:12px}

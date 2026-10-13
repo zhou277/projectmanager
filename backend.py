@@ -225,6 +225,7 @@ class Database:
             """)
 
     def ensure_compatibility(self):
+        self.ensure_column("projects", "sort_order", "INTEGER DEFAULT 0")
         self.ensure_column("daily_logs", "tomorrow", "TEXT DEFAULT ''")
         self.ensure_column("tasks", "completed_at", "TEXT")
         self.ensure_column("tests", "software_version", "TEXT DEFAULT ''")

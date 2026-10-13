@@ -97,7 +97,7 @@ async function taskDialog(edit=false,editId=null){
  const defaultDay=x?.start_date||nextTaskDate(rows);
  let parentField=`<div><label>父任务</label><select id="f_parent_id">${taskParentOptions(rows,x)}</select></div>`;
  let childCreateField=edit?`<div class="wide child-create-section"><label>子任务</label><div class="child-create-row"><span class="muted">直接创建一个新任务并自动挂到当前任务下面。</span><button type="button" class="primary" onclick="openChildTaskDialog(${x.id})">+ 新建子任务</button></div></div>`:"";
- showModal(edit?"编辑任务":"新增任务",`<div class="form-grid">${f("任务标题","title",x?.title||"")}${parentField}<div class="wide task-status-priority">${sf("状态","status",["待办","进行中","阻塞","已完成"],x?.status||"待办")}${sf("优先级","priority",["低","中","高","紧急"],x?.priority||"中")}</div>${f("开始","start_date",defaultDay,"date")}${f("截止","due_date",x?.due_date||defaultDay,"date")}${ta("描述","description",x?.description||"")}${await versionMultiSelect(ids)}${dependencyChoices(rows,x)}${childCreateField}</div>${buttons(`saveTask(${edit})`)}`);
+ showModal(edit?"编辑任务":"新增任务",`<div class="form-grid">${f("任务标题","title",x?.title||"")}${parentField}<div class="wide task-status-priority">${sf("状态","status",["待办","进行中","阻塞","已完成"],x?.status||"待办")}${sf("优先级","priority",["低","中","高","紧急"],x?.priority||"中")}</div>${f("开始","start_date",defaultDay,"date")}${f("截止","due_date",x?.due_date||defaultDay,"date")}${ta("描述","description",x?.description||"")}${await versionMultiSelect(ids,!edit)}${dependencyChoices(rows,x)}${childCreateField}</div>${buttons(`saveTask(${edit})`)}`);
  installTaskDatePreview(rows);
  if(!edit)$('#f_parent_id')?.addEventListener('change',()=>{const day=nextTaskDate(rows,Number($('#f_parent_id').value)||null);$('#f_start_date').value=day;$('#f_due_date').value=day;previewTaskDates();});
 }
@@ -114,7 +114,7 @@ async function openChildTaskDialog(parentTaskId){
       <div class="wide task-status-priority">${sf("状态","status",["待办","进行中","阻塞","已完成"],"待办")}${sf("优先级","priority",["低","中","高","紧急"],"中")}</div>
       <div class="wide task-date-pair">${f("开始","start_date",today,"date")}${f("截止","due_date",today,"date")}</div>
       ${ta("描述","description","")}
-      ${await versionMultiSelect([])}
+      ${await versionMultiSelect([],true)}
       ${dependencyChoices(rows,{parent_id:parentTaskId})}
     </div>
     <div class="actions" style="justify-content:flex-end;margin-top:14px">

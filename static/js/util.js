@@ -129,3 +129,5 @@ function issueId(n){return `Issue-${n}`}
 function badge(s,type="task"){let c=type==="issue"?(s==="Open"?"red":(["Closed","Resolved"].includes(s)?"green":s==="In Progress"?"yellow":s==="Blocked"?"orange":"blue")):(s==="已完成"?"green":s==="进行中"?"yellow":s==="阻塞"?"orange":"blue");return `<span class="badge ${c}">${esc(s)}</span>`}
 
 function vers(v){return (v||[]).map(x=>`<span class="version-chip">${esc(x)}</span>`).join("")}
+
+function displayDateTime(value){return String(value||'').replace(/^(\d{4}-\d{2}-\d{2})T(?=\d{2}:\d{2})/,'$1 ');}

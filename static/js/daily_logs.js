@@ -1,5 +1,5 @@
 // Parallel daily writing, read-only project references, and preserved legacy snapshots.
-const Daily={date:null,log:null,archive:{years:[]},available:{projects:[]},dirty:false,saving:false,loading:false,request:0,year:null,month:null};
+const Daily={date:null,log:null,archive:{years:[]},available:{projects:[]},dirty:false,saving:false,loading:false,request:0,year:null,week:null};
 
 function dailyToday(){return new Date(Date.now()+8*3600000).toISOString().slice(0,10);}
 function dailyKey(item){return `${item.entity_kind}:${item.entity_id}`;}
@@ -14,7 +14,7 @@ function installDailyLogGuards(){window.addEventListener("beforeunload",event=>{
 function openDailyLogs(){if(S.tab==="daily")return;if(!allowDailyLogNavigation())return;S.tab="daily";S.selected=null;S.selectedKind=null;return render();}
 
 async function dailyLogsPage(){
- $("#projectTitle").textContent="每日日志";$("#projectMeta").textContent="跨项目计划与工作记录 · 按年 / 月归档";
+ $("#projectTitle").textContent="每日日志";$("#projectMeta").textContent="跨项目计划与工作记录 · 按工作年 / 工作周归档";
  return loadDailyLog(Daily.date||dailyToday());
 }
 async function loadDailyLog(day){
@@ -27,21 +27,46 @@ async function loadDailyLog(day){
    const [log,archive,available]=await Promise.all([api(`/api/daily-logs/${day}`),api("/api/daily-logs/archive"),api("/api/daily-logs/available")]);
    if(request!==Daily.request||S.tab!=="daily")return;
    Daily.date=day;Daily.log=log;Daily.archive=archive;Daily.available=available;Daily.dirty=false;
-   Daily.year=Number(day.slice(0,4));Daily.month=Number(day.slice(5,7));renderDailyLog();
+   const work=dailyWorkWeek(day);Daily.year=work.year;Daily.week=work.week;renderDailyLog();
  }catch(error){if(S.tab==="daily"&&request===Daily.request){if(!Daily.log)$("#content").innerHTML=`<div class="card">日志加载失败：${esc(error.message)} <button onclick="dailyLogsPage()">重试</button></div>`;else alert("日志加载失败，当前内容已保留："+error.message);}}
  finally{Daily.loading=false;if(S.tab==="daily"&&Daily.log)renderDailyLog();}
 }
 function dailyShiftDay(delta){const date=new Date(Daily.date+"T00:00:00Z");date.setUTCDate(date.getUTCDate()+delta);return loadDailyLog(date.toISOString().slice(0,10));}
 
-function dailyArchiveHtml(){
- const years=[...new Set([Number(Daily.date.slice(0,4)),...Daily.archive.years.map(row=>row.year)])].sort((a,b)=>b-a);
- const record=Daily.archive.years.find(row=>row.year===Daily.year);
- const months=record?.months.filter(row=>Daily.month==null||row.month===Daily.month)||[];
- return `<h3>日志归档</h3><label>年份</label><select id="dailyYear" onchange="dailyArchiveFilter(Number(this.value),null)">${years.map(year=>`<option value="${year}" ${year===Daily.year?"selected":""}>${year} 年</option>`).join("")}</select>
- <label class="daily-filter-label">月份</label><select id="dailyMonth" onchange="dailyArchiveFilter(Daily.year,this.value?Number(this.value):null)"><option value="">全部月份</option>${Array.from({length:12},(_,i)=>i+1).map(month=>`<option value="${month}" ${month===Daily.month?"selected":""}>${month} 月</option>`).join("")}</select>
- <div class="daily-archive-days">${months.map(month=>`<section><h4>${Daily.year} 年 ${month.month} 月 <span class="muted">${month.count} 篇</span></h4>${month.days.map(day=>`<button class="daily-archive-day ${day.log_date===Daily.date?"active":""}" onclick="loadDailyLog('${day.log_date}')" title="${esc(day.summary)}"><strong>${day.log_date.slice(5)}</strong><small>${esc(day.summary||"暂无内容")}</small></button>`).join("")}</section>`).join("")||'<p class="muted">此月份暂无已保存日志。可选择日期新建。</p>'}</div>`;
+function dailyWorkWeek(value){
+ const day=parseIsoDateUTC(value);if(!day)return null;
+ const weekday=day.getUTCDay()||7;
+ const monday=new Date(day);monday.setUTCDate(day.getUTCDate()-weekday+1);
+ const thursday=new Date(monday);thursday.setUTCDate(monday.getUTCDate()+3);
+ const year=thursday.getUTCFullYear();const firstThursday=new Date(0);firstThursday.setUTCFullYear(year,0,4);firstThursday.setUTCHours(0,0,0,0);
+ const firstMonday=new Date(firstThursday);firstMonday.setUTCDate(firstThursday.getUTCDate()-(firstThursday.getUTCDay()||7)+1);
+ const week=Math.round((monday-firstMonday)/(7*86400000))+1;
+ const sunday=new Date(monday);sunday.setUTCDate(monday.getUTCDate()+6);
+ return {year,week,weekday,start_date:monday.toISOString().slice(0,10),end_date:sunday.toISOString().slice(0,10)};
 }
-function dailyArchiveFilter(year,month){Daily.year=year;Daily.month=month;$("#dailyArchive").innerHTML=dailyArchiveHtml();}
+function dailyWorkYears(){
+ if(Daily.archive.work_years)return Daily.archive.work_years;
+ // Read older cached archive responses without depending on summary previews.
+ const grouped=new Map();
+ for(const year of Daily.archive.years||[])for(const month of year.months||[])for(const day of month.days||[]){
+   const work=dailyWorkWeek(day.log_date);if(!work)continue;
+   if(!grouped.has(work.year))grouped.set(work.year,new Map());
+   const weeks=grouped.get(work.year);if(!weeks.has(work.week))weeks.set(work.week,{...work,days:[]});
+   weeks.get(work.week).days.push({...day,weekday:work.weekday});
+ }
+ return [...grouped].sort((a,b)=>b[0]-a[0]).map(([year,weeks])=>({year,weeks:[...weeks.values()].sort((a,b)=>b.week-a.week).map(week=>({...week,count:week.days.length}))}));
+}
+function dailyArchiveHtml(){
+ const archive=dailyWorkYears();
+ const today=dailyWorkWeek(dailyToday()),current=dailyWorkWeek(Daily.date);
+ const years=[...new Set([today.year,current.year,...archive.map(row=>row.year)])].sort((a,b)=>b-a);
+ const year=Daily.year||current.year;
+ const record=archive.find(row=>row.year===year);
+ const weeks=record?.weeks.filter(row=>Daily.week==null||row.week===Daily.week)||[];
+ const maxWeek=dailyWorkWeek(`${year}-12-28`).week;
+ return `<h3>工作周日志</h3><label>工作年</label><select id="dailyYear" onchange="dailyArchiveFilter(Number(this.value),null)">${years.map(value=>`<option value="${value}" ${value===year?'selected':''}>${value} 年</option>`).join('')}</select><label class="daily-filter-label">工作周（周一至周日）</label><select id="dailyWeek" onchange="dailyArchiveFilter(Daily.year,this.value?Number(this.value):null)"><option value="">全部工作周</option>${Array.from({length:maxWeek},(_,index)=>index+1).map(week=>`<option value="${week}" ${week===Daily.week?'selected':''}>第 ${week} 周</option>`).join('')}</select><div class="daily-archive-days">${weeks.map(week=>`<section><h4>${year} 年 第 ${week.week} 周工作日志</h4><div class="muted">${week.start_date.slice(5)} 至 ${week.end_date.slice(5)}</div>${week.days.map(day=>`<button class="daily-archive-day ${day.log_date===Daily.date?'active':''}" onclick="loadDailyLog('${day.log_date}')"><strong>${day.log_date} 星期${'一二三四五六日'[(day.weekday||dailyWorkWeek(day.log_date).weekday)-1]}</strong></button>`).join('')}</section>`).join('')||'<p class="muted">当前工作周暂无已保存日志。可选择日期新建。</p>'}</div>`;
+}
+function dailyArchiveFilter(year,week){Daily.year=year;Daily.week=week;$('#dailyArchive').innerHTML=dailyArchiveHtml();}
 
 function dailyItemHtml(item){
  const kind=item.entity_kind==='task'?'Task':'Issue';
@@ -81,7 +106,7 @@ function renderDailyLog(){
  <div class="daily-writing-columns"><section><label>今天计划做什么</label><textarea id="dailyPlanned" class="daily-main-text" placeholder="今天的目标、安排和优先事项…" oninput="dailyFieldUpdate('planned',this.value)">${esc(log.planned)}</textarea>
  </section><section><label>今天实际做了什么</label><textarea id="dailyActual" class="daily-main-text" placeholder="实际完成内容、结果和遇到的问题…" oninput="dailyFieldUpdate('actual',this.value)">${esc(log.actual)}</textarea>
  </section></div><label>明日计划</label><textarea id="dailyTomorrow" class="daily-main-text" placeholder="明天的目标、安排和需要跟进的事项…" oninput="dailyFieldUpdate('tomorrow',this.value)">${esc(log.tomorrow||"")}</textarea>
- <div class="actions daily-save-row"><span class="muted" id="dailySaveStatus">${Daily.dirty?"有未保存的修改":log.id?"已保存 · "+esc(log.updated_at):"新日志，尚未保存"}</span><span class="spacer"></span><button id="dailySaveButton" class="primary" onclick="saveDailyLog()">保存当天日志</button></div></div>
+ <div class="actions daily-save-row"><span class="muted" id="dailySaveStatus">${Daily.dirty?"有未保存的修改":log.id?"已保存 · "+esc(displayDateTime(log.updated_at)):"新日志，尚未保存"}</span><span class="spacer"></span><button id="dailySaveButton" class="primary" onclick="saveDailyLog()">保存当天日志</button></div></div>
  ${log.items.length?`<details class="card daily-legacy-records"><summary>历史关联事项记录 · ${log.items.length} 项</summary><p class="muted">旧日志的事项与工作结果保留展示，新日志无需加入项目事项。</p>${log.items.map(dailyItemHtml).join('')}</details>`:''}</main>
  <aside class="card daily-pool"><h3>各项目未完成事项</h3><div class="field-help">点击任务或 Issue 查看具体描述，不会离开日志或改变日志内容。</div><label>项目</label><select id="dailyPoolProject" onchange="dailyRefreshPoolView()"><option value="">全部项目</option>${Daily.available.projects.map(project=>`<option value="${project.id}">${esc(project.name)}</option>`).join("")}</select><label class="daily-filter-label">搜索</label><input id="dailyPoolSearch" placeholder="搜索任务、Issue 或编号" oninput="dailyRefreshPoolView()"><div class="actions daily-source-actions"><button onclick="dailyRefreshAvailable()">刷新事项</button></div><div id="dailyPoolItems">${dailyPoolHtml()}</div></aside></div>`;
 }

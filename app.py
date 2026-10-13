@@ -18,12 +18,13 @@ import uvicorn
 
 from backend import Database, now_text, today_text
 from task_schedule import default_task_day, schedule_task
+from project_features import validate_ids, validate_issue_tests, replace_issue_tests, linked_tests, linked_issues, replace_versions
 from dashboard import dashboard_data
 from daily_logs import make_daily_router
 from task_dependencies import validate_dependencies, replace_dependencies, enrich_dependencies
 
 APP_NAME = "projectmanager"
-APP_VERSION = "3.25.0"
+APP_VERSION = "3.26.0"
 HOST = "127.0.0.1"
 PREFERRED_PORT = 7000
 
@@ -267,19 +268,32 @@ def about():
 
 @app.get("/api/projects")
 def get_projects():
-    return db.q("SELECT * FROM projects ORDER BY id")
+    return db.q("SELECT * FROM projects ORDER BY sort_order,id")
 
 @app.post("/api/projects")
 def create_project(p: dict = Body(...)):
     name = (p.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "项目名称不能为空")
-    pid = db.exec(
-        """INSERT INTO projects(name,owner,description,start_date,target_date,created_at)
-           VALUES(?,?,?,?,?,?)""",
-        (name,p.get("owner",""),p.get("description",""),p.get("start_date") or today_text(),p.get("target_date",""),now_text())
-    )
+    with TASK_WRITE_LOCK:
+        pid = db.exec(
+            """INSERT INTO projects(name,owner,description,start_date,target_date,created_at,sort_order)
+               VALUES(?,?,?,?,?,?,(SELECT COALESCE(MAX(sort_order),-1)+1 FROM projects))""",
+            (name,p.get("owner",""),p.get("description",""),p.get("start_date") or today_text(),p.get("target_date",""),now_text())
+        )
     return {"id":pid}
+
+@app.put("/api/projects/order")
+def reorder_projects(p: dict = Body(...)):
+    ids = validate_ids(p.get("project_ids"), "项目顺序")
+    if len(ids) != len(p["project_ids"]):
+        raise HTTPException(400, "项目顺序不能重复")
+    with TASK_WRITE_LOCK, db.connect() as connection:
+        existing = {row["id"] for row in connection.execute("SELECT id FROM projects")}
+        if set(ids) != existing:
+            raise HTTPException(409, "项目列表已变化，请刷新后重新排序")
+        connection.executemany("UPDATE projects SET sort_order=? WHERE id=?", [(index, key) for index, key in enumerate(ids)])
+    return {"ok": True, "project_ids": ids}
 
 @app.put("/api/projects/{pid}")
 def update_project(pid:int,p:dict=Body(...)):
@@ -484,27 +498,39 @@ def get_issues(pid:int):
     for r in rows:
         r["display_id"]=nums.get(r["id"],0)
         r["versions"]=entity_versions("issue_versions","issue_id",r["id"])
+        r["tests"]=linked_tests(db,pid,r["id"])
+        r["test_ids"]=[item["id"] for item in r["tests"]]
     return rows
 
 @app.post("/api/issues/{pid}")
 def create_issue(pid:int,p:dict=Body(...)):
-    iid=db.exec("""INSERT INTO issues(project_id,related_task_id,title,issue_type,severity,status,assignee,description,root_cause,solution,created_at)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                (pid,p.get("related_task_id"),p.get("title",""),p.get("issue_type","Bug"),p.get("severity","中"),p.get("status","Open"),
-                 p.get("assignee",""),p.get("description",""),p.get("root_cause",""),p.get("solution",""),now_text()))
-    db.replace_version_links("issue_versions","issue_id",iid,p.get("version_ids",[]))
+    with TASK_WRITE_LOCK, db.connect() as connection:
+        if not connection.execute("SELECT id FROM projects WHERE id=?", (pid,)).fetchone():
+            raise HTTPException(404, "项目不存在")
+        test_ids=validate_issue_tests(connection,pid,p.get("test_ids",[]))
+        iid=connection.execute("""INSERT INTO issues(project_id,related_task_id,title,issue_type,severity,status,assignee,description,root_cause,solution,created_at)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                    (pid,p.get("related_task_id"),p.get("title",""),p.get("issue_type","Bug"),p.get("severity","中"),p.get("status","Open"),
+                     p.get("assignee",""),p.get("description",""),p.get("root_cause",""),p.get("solution",""),now_text())).lastrowid
+        replace_versions(connection,"issue_versions","issue_id",iid,p.get("version_ids",[]))
+        replace_issue_tests(connection,iid,test_ids)
     return {"id":iid}
 
 @app.put("/api/issues/item/{iid}")
 def update_issue(iid:int,p:dict=Body(...)):
-    row=db.one("SELECT * FROM issues WHERE id=?",(iid,))
-    if not row: raise HTTPException(404,"Issue 不存在")
-    status=p.get("status",row["status"]); closed=now_text() if status in ("Closed","Resolved") else None
-    db.exec("""UPDATE issues SET related_task_id=?,title=?,issue_type=?,severity=?,status=?,assignee=?,description=?,root_cause=?,solution=?,closed_at=? WHERE id=?""",
-            (p.get("related_task_id"),p.get("title",row["title"]),p.get("issue_type",row["issue_type"]),p.get("severity",row["severity"]),
-             status,p.get("assignee",row["assignee"]),p.get("description",row["description"]),p.get("root_cause",row["root_cause"]),
-             p.get("solution",row["solution"]),closed,iid))
-    db.replace_version_links("issue_versions","issue_id",iid,p.get("version_ids",[]))
+    with TASK_WRITE_LOCK, db.connect() as connection:
+        row=connection.execute("SELECT * FROM issues WHERE id=?",(iid,)).fetchone()
+        if not row: raise HTTPException(404,"Issue 不存在")
+        test_ids=validate_issue_tests(connection,row["project_id"],p["test_ids"]) if "test_ids" in p else None
+        status=p.get("status",row["status"]); closed=now_text() if status in ("Closed","Resolved") else None
+        connection.execute("""UPDATE issues SET related_task_id=?,title=?,issue_type=?,severity=?,status=?,assignee=?,description=?,root_cause=?,solution=?,closed_at=? WHERE id=?""",
+                (p.get("related_task_id"),p.get("title",row["title"]),p.get("issue_type",row["issue_type"]),p.get("severity",row["severity"]),
+                 status,p.get("assignee",row["assignee"]),p.get("description",row["description"]),p.get("root_cause",row["root_cause"]),
+                 p.get("solution",row["solution"]),closed,iid))
+        if "version_ids" in p:
+            replace_versions(connection,"issue_versions","issue_id",iid,p["version_ids"])
+        if test_ids is not None:
+            replace_issue_tests(connection,iid,test_ids)
     return {"ok":True}
 
 @app.patch("/api/issues/item/{iid}/status")
@@ -522,10 +548,11 @@ def update_issue_status(iid:int,p:dict=Body(...)):
 
 @app.delete("/api/issues/item/{iid}")
 def delete_issue(iid:int):
-    db.exec("DELETE FROM test_issues WHERE issue_id=?",(iid,))
-    db.exec("DELETE FROM issue_versions WHERE issue_id=?",(iid,))
-    db.exec("DELETE FROM issues WHERE id=?",(iid,))
-    return {"ok":True}
+    with TASK_WRITE_LOCK, db.connect() as connection:
+        connection.execute("DELETE FROM test_issues WHERE issue_id=?",(iid,))
+        connection.execute("DELETE FROM issue_versions WHERE issue_id=?",(iid,))
+        connection.execute("DELETE FROM issues WHERE id=?",(iid,))
+        return {"ok":True}
 
 @app.get("/api/tests/{pid}")
 def get_tests(pid:int):
@@ -534,34 +561,38 @@ def get_tests(pid:int):
     for r in rows:
         r["display_id"]=nums.get(r["id"],0)
         r["versions"]=entity_versions("test_versions","test_id",r["id"])
+        r["issues"]=linked_issues(db,pid,r["id"])
     return rows
 
 @app.post("/api/tests/{pid}")
 def create_test(pid:int,p:dict=Body(...)):
-    tid=db.exec("""INSERT INTO tests(project_id,task_id,name,category,environment,steps,expected,actual,status,tester,executed_at,notes)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (pid,p.get("task_id"),p.get("name",""),p.get("category","集成测试"),p.get("environment",""),p.get("steps",""),
-                 p.get("expected",""),p.get("actual",""),p.get("status","未执行"),p.get("tester",""),now_text(),p.get("notes","")))
-    db.replace_version_links("test_versions","test_id",tid,p.get("version_ids",[]))
-    return {"id":tid}
+    with TASK_WRITE_LOCK:
+        tid=db.exec("""INSERT INTO tests(project_id,task_id,name,category,environment,steps,expected,actual,status,tester,executed_at,notes)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (pid,p.get("task_id"),p.get("name",""),p.get("category","集成测试"),p.get("environment",""),p.get("steps",""),
+                     p.get("expected",""),p.get("actual",""),p.get("status","未执行"),p.get("tester",""),now_text(),p.get("notes","")))
+        db.replace_version_links("test_versions","test_id",tid,p.get("version_ids",[]))
+        return {"id":tid}
 
 @app.put("/api/tests/item/{tid}")
 def update_test(tid:int,p:dict=Body(...)):
-    row=db.one("SELECT * FROM tests WHERE id=?",(tid,))
-    if not row: raise HTTPException(404,"测试不存在")
-    db.exec("""UPDATE tests SET task_id=?,name=?,category=?,environment=?,steps=?,expected=?,actual=?,status=?,tester=?,executed_at=?,notes=? WHERE id=?""",
-            (p.get("task_id"),p.get("name",row["name"]),p.get("category",row["category"]),p.get("environment",row["environment"]),
-             p.get("steps",row["steps"]),p.get("expected",row["expected"]),p.get("actual",row["actual"]),p.get("status",row["status"]),
-             p.get("tester",row["tester"]),now_text(),p.get("notes",row["notes"]),tid))
-    db.replace_version_links("test_versions","test_id",tid,p.get("version_ids",[]))
-    return {"ok":True}
+    with TASK_WRITE_LOCK:
+        row=db.one("SELECT * FROM tests WHERE id=?",(tid,))
+        if not row: raise HTTPException(404,"测试不存在")
+        db.exec("""UPDATE tests SET task_id=?,name=?,category=?,environment=?,steps=?,expected=?,actual=?,status=?,tester=?,executed_at=?,notes=? WHERE id=?""",
+                (p.get("task_id"),p.get("name",row["name"]),p.get("category",row["category"]),p.get("environment",row["environment"]),
+                 p.get("steps",row["steps"]),p.get("expected",row["expected"]),p.get("actual",row["actual"]),p.get("status",row["status"]),
+                 p.get("tester",row["tester"]),now_text(),p.get("notes",row["notes"]),tid))
+        db.replace_version_links("test_versions","test_id",tid,p.get("version_ids",[]))
+        return {"ok":True}
 
 @app.delete("/api/tests/item/{tid}")
 def delete_test(tid:int):
-    db.exec("DELETE FROM test_versions WHERE test_id=?",(tid,))
-    db.exec("DELETE FROM test_issues WHERE test_id=?",(tid,))
-    db.exec("DELETE FROM tests WHERE id=?",(tid,))
-    return {"ok":True}
+    with TASK_WRITE_LOCK, db.connect() as connection:
+        connection.execute("DELETE FROM test_versions WHERE test_id=?",(tid,))
+        connection.execute("DELETE FROM test_issues WHERE test_id=?",(tid,))
+        connection.execute("DELETE FROM tests WHERE id=?",(tid,))
+        return {"ok":True}
 
 @app.get("/api/versions/{pid}")
 def get_versions(pid:int):

@@ -1,5 +1,5 @@
 """Personal daily journal, with historical snapshots of cross-project work."""
-from datetime import date
+from datetime import date, timedelta
 from threading import Lock
 from fastapi import APIRouter, Body, HTTPException, Query
 
@@ -60,15 +60,22 @@ def make_daily_router(get_db, today_text, now_text, mutation_lock):
     @router.get("/archive")
     def archive():
         rows = get_db().q("SELECT log_date,progress,planned,actual,tomorrow,updated_at FROM daily_logs ORDER BY log_date DESC")
-        years = {}
+        years, work_years = {}, {}
         for row in rows:
+            parsed = date.fromisoformat(row["log_date"])
+            work_year, week, weekday = parsed.isocalendar()
+            monday = parsed - timedelta(days=weekday-1)
+            sunday = date.fromordinal(min(date.max.toordinal(), monday.toordinal()+6))
+            week_record = work_years.setdefault(work_year, {}).setdefault(week, {"week": week, "start_date": monday.isoformat(), "end_date": sunday.isoformat(), "days": []})
+            week_record["days"].append({"log_date": row["log_date"], "weekday": weekday})
             year, month = int(row["log_date"][:4]), int(row["log_date"][5:7])
             months = years.setdefault(year, {})
             months.setdefault(month, []).append({"log_date": row["log_date"], "progress": row["progress"],
                 "summary": (row["actual"] or row["planned"] or row["tomorrow"])[:100], "updated_at": row["updated_at"]})
         return {"years": [{"year": year, "count": sum(len(days) for days in months.values()),
                            "months": [{"month": month, "count": len(days), "days": days} for month, days in months.items()]}
-                          for year, months in years.items()]}
+                          for year, months in years.items()],
+                "work_years": [{"year": year, "weeks": [dict(record, count=len(record["days"])) for week, record in sorted(weeks.items(), reverse=True)]} for year, weeks in sorted(work_years.items(), reverse=True)]}
 
     @router.get("")
     def list_logs(year: int | None = Query(None, ge=1, le=9999), month: int | None = Query(None, ge=1, le=12)):

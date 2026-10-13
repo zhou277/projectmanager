@@ -166,7 +166,7 @@ def test_backup_retention(client, monkeypatch):
 def test_static_module_files_are_served_and_version_updated(client):
     import re
 
-    assert client.get("/api/about").json()["version"] == "3.25.0"
+    assert client.get("/api/about").json()["version"] == "3.26.0"
     html = client.get("/").text
     scripts = re.findall(r'<script src="([^"]+)"', html)
     assert scripts[-1] == "/static/app.js"
